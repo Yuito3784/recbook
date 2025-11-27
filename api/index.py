@@ -12,33 +12,28 @@ from linebot.models import (
 )
 import google.generativeai as genai
 from PIL import Image
-from dotenv import load_dotenv
-# ★ここが変わります
-from a2wsgi import ASGIMiddleware
-
-# .env読み込み
-load_dotenv()
+from mangum import Mangum
 
 # --- 設定値 ---
+# .envはVercel上では読まれないため、os.getenvで直接取ります
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
-# 変数名は app のままでOK
 app = FastAPI()
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-# Gemini設定
+# Gemini設定（最新モデル）
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ヘルパー関数: Gemini解析 ---
+# --- ヘルパー関数 ---
 def analyze_book_image(image_bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -64,7 +59,6 @@ def analyze_book_image(image_bytes):
         logger.error(f"AI Error: {e}")
         return None
 
-# --- ヘルパー関数: Flex Message ---
 def create_flex_message(data):
     import urllib.parse
     query = urllib.parse.quote(data['search_keyword'])
@@ -142,9 +136,8 @@ def create_flex_message(data):
     }
     return FlexSendMessage(alt_text=f"【要約】{data['title']}", contents=bubble_json)
 
-
 # --- エンドポイント ---
-# ★重要: URLは /api/index のまま
+# ★ファイル名が api/index.py なので、URLは /api/index になります
 @app.post("/api/index")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
@@ -179,7 +172,6 @@ def handle_image_message(event):
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
-# ★★★ ここが修正ポイント ★★★
-# Mangumではなく、a2wsgiでWSGIアプリに変換します。
-# Vercelはこれを標準的な「app」変数として認識し、文句を言わなくなります。
-app = ASGIMiddleware(app)
+# ★重要：Vercel Serverless Functionのエントリーポイント
+# Mangumを使って、FastAPIをVercel(Lambda)形式に変換します
+handler = Mangum(app)
