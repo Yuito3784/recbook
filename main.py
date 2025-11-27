@@ -25,7 +25,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # 名前を変更
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
-app = FastAPI()
+server = FastAPI()
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
@@ -154,7 +154,7 @@ def create_flex_message(data):
 
 
 # --- LINE Webhook ---
-@app.post("/callback")
+@server.post("/callback")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
@@ -190,7 +190,7 @@ def handle_image_message(event):
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
-handler = Mangum(app)
+app = Mangum(server)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
