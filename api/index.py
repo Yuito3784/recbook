@@ -9,7 +9,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, ImageMessage, TextMessage, TextSendMessage,
-    FlexSendMessage
+    FlexSendMessage, StickerMessage # スタンプ対応を追加
 )
 import google.generativeai as genai
 from PIL import Image
@@ -37,8 +37,7 @@ logger = logging.getLogger(__name__)
 def analyze_book_image(image_bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes))
-
-        # ランダムな切り口（アングル）は維持しつつ、中身を語らせる
+        # ... (中略: 前回と同じ戦略ロジック) ...
         strategies = [
             {"angle": "【A：裏ロジック】", "instruction": "常識の逆を行く成功法則として紹介する。"},
             {"angle": "【B：機会損失】", "instruction": "この知識がないとどれだけ損するかを強調する。"},
@@ -51,7 +50,7 @@ def analyze_book_image(image_bytes):
         prompt = f"""
         あなたは「本の価値を最大化して伝えるプロの書評家」です。
         送られてきた本の表紙から内容を特定し、読者が「この具体的な知識が欲しい！」と強く思うような紹介文を作成してください。
-
+        
         【選ばれた戦略】: {selected_strategy['angle']}
         {selected_strategy['instruction']}
 
@@ -74,7 +73,6 @@ def analyze_book_image(image_bytes):
           "search_keyword": "Amazon検索用キーワード（タイトル 著者名）"
         }}
         """
-        
         response = model.generate_content([prompt, image])
         response_text = response.text.replace("```json", "").replace("```", "").strip()
         if "{" not in response_text: raise Exception("Not JSON")
@@ -84,11 +82,11 @@ def analyze_book_image(image_bytes):
         return None
 
 def create_flex_message(data):
+    # ... (中略: 前回と同じFlex Message作成ロジック) ...
     import urllib.parse
     query = urllib.parse.quote(data['search_keyword'])
     amazon_url = f"https://www.amazon.co.jp/s?k={query}&tag={AMAZON_ASSOCIATE_TAG}"
     
-    # ポイント表示用のコンポーネントを作成
     points_contents = []
     for point in data['key_points']:
         points_contents.append({
@@ -122,10 +120,7 @@ def create_flex_message(data):
                 { "type": "text", "text": data['title'], "weight": "bold", "size": "lg", "wrap": True, "align": "center", "color": "#1A237E" },
                 { "type": "separator", "margin": "lg", "color": "#EEEEEE" },
                 { "type": "text", "text": f"“ {data['catchphrase']} ”", "weight": "bold", "size": "md", "color": "#333333", "wrap": True, "margin": "lg", "align": "center", "style": "italic" },
-                
-                # ここに「3つのポイント」を挿入
                 { "type": "box", "layout": "vertical", "margin": "lg", "contents": points_contents },
-
                 { "type": "separator", "margin": "lg", "color": "#EEEEEE" },
                 { "type": "text", "text": data['description'], "size": "xs", "color": "#777777", "wrap": True, "margin": "lg", "lineSpacing": "4px" }
             ] 
@@ -150,19 +145,45 @@ async def callback(request: Request):
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
 
+# ★★★ 改善：テキストが送られた時の処理 ★★★
 @line_handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text="本の表紙を送ってください。\n中身を分析し、重要なポイントを抽出します。"))
+    # ユーザーが何を言っても、使い方をガイドする
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="【使い方】\n\n気になっている本の「表紙」の写真を1枚送ってください📸\n\nAIがその本を読むべき理由と、具体的な学びを3つ抽出してプレゼンします。")
+    )
+
+# ★★★ 改善：スタンプが送られた時もガイドする ★★★
+@line_handler.add(MessageEvent, message=StickerMessage)
+def handle_sticker_message(event):
+    line_bot_api.reply_message(
+        event.reply_token,
+        TextSendMessage(text="スタンプありがとうございます！\n本の写真を送ると、私が全力で解説しますよ📚")
+    )
 
 @line_handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     message_id = event.message.id
     message_content = line_bot_api.get_message_content(message_id)
     image_bytes = message_content.content
+    
+    # ユーザーに「解析中...」と伝える（簡易的）
+    # ※Pushメッセージは有料になるリスクがあるので、ReplyTokenを使う必要があるが
+    # LINEの仕様上、1つのReplyTokenで1回しか返信できない。
+    # なので、ここはあえて「待たせる」か、もしくはLoading Animationを使う（高度な実装）。
+    # 今回はシンプルに、解析失敗時だけ丁寧に返すようにします。
+
     book_data = analyze_book_image(image_bytes)
+    
     if not book_data:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="解析できませんでした。別の角度から撮影してください。"))
+        # ★★★ 改善：解析失敗時のメッセージを丁寧に ★★★
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="すみません、うまく読み取れませんでした...💦\n\n・光が反射していないか\n・ブレていないか\n\nを確認して、もう一度正面から撮影してください🙇‍♂️")
+        )
         return
+
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
