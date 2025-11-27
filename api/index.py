@@ -13,7 +13,8 @@ from linebot.models import (
 import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
-from mangum import Mangum # 復活！
+# ★ここが変わります
+from a2wsgi import ASGIMiddleware
 
 # .env読み込み
 load_dotenv()
@@ -25,13 +26,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
+# 変数名は app のままでOK
 app = FastAPI()
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # Gemini設定
 genai.configure(api_key=GEMINI_API_KEY)
-# モデル設定（最新かつ高速なモデルを指定）
 model = genai.GenerativeModel('gemini-2.5-flash')
 
 logging.basicConfig(level=logging.INFO)
@@ -143,6 +144,7 @@ def create_flex_message(data):
 
 
 # --- エンドポイント ---
+# ★重要: URLは /api/index のまま
 @app.post("/api/index")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
@@ -177,8 +179,7 @@ def handle_image_message(event):
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
-# ★重要：Vercelのエントリーポイント
-# 変数名を「handler」にして、Mangumで包みます。
-handler = Mangum(app)
-# Vercelが変数「app」を探した場合に備えて、Mangum自体をappにも入れます
-app_adapter = handler
+# ★★★ ここが修正ポイント ★★★
+# Mangumではなく、a2wsgiでWSGIアプリに変換します。
+# Vercelはこれを標準的な「app」変数として認識し、文句を言わなくなります。
+app = ASGIMiddleware(app)
