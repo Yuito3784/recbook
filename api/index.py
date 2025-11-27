@@ -1,14 +1,23 @@
 import os
-import io
+import sys
 import json
 import logging
+import io
 from fastapi import FastAPI, Request, HTTPException
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, ImageMessage, TextMessage, TextSendMessage, FlexSendMessage
+from linebot.models import (
+    MessageEvent, ImageMessage, TextMessage, TextSendMessage,
+    FlexSendMessage
+)
 import google.generativeai as genai
 from PIL import Image
-from mangum import Mangum
+from dotenv import load_dotenv
+# ★ここがポイント！Vercelが大好きな「a2wsgi」を使います
+from a2wsgi import ASGIMiddleware
+
+# .env読み込み
+load_dotenv()
 
 # --- 設定値 ---
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
@@ -17,17 +26,21 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
-# ★ここを変更！ app だとVercelが勘違いするので server にします
-server = FastAPI()
+# ★重要1：変数名を「_app」にします。
+# 先頭にアンダーバーをつけることで、Vercelの自動検知から隠します。
+_app = FastAPI()
+
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
+# Gemini設定
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-2.5-flash')
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- 関数 (省略せずそのまま) ---
+# --- 関数 ---
 def analyze_book_image(image_bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes))
@@ -55,6 +68,7 @@ def create_flex_message(data):
     import urllib.parse
     query = urllib.parse.quote(data['search_keyword'])
     amazon_url = f"https://www.amazon.co.jp/s?k={query}&tag={AMAZON_ASSOCIATE_TAG}"
+    
     bubble_json = {
         "type": "bubble",
         "header": { "type": "box", "layout": "vertical", "contents": [{ "type": "text", "text": "⚡ 激アツ書籍発見 ⚡", "weight": "bold", "color": "#FFD700", "size": "sm", "align": "center" }], "backgroundColor": "#000000" },
@@ -65,8 +79,8 @@ def create_flex_message(data):
     return FlexSendMessage(alt_text=f"【要約】{data['title']}", contents=bubble_json)
 
 # --- エンドポイント ---
-# ★ここも server に変更
-@server.post("/api/index")
+# ★重要2：デコレーターも _app を使います
+@_app.post("/api/index")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
@@ -92,6 +106,6 @@ def handle_image_message(event):
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
-# ★ここが最重要！ Vercelは 'handler' という変数を探します。
-# app という名前を消したことで、Vercelは迷わずこれを使うようになります。
-handler = Mangum(server)
+# ★重要3：ここで「app」という名前で、WSGI変換したものを公開します。
+# Vercelは「app」という変数だけを見つけて実行します。中身はa2wsgiなのでVercelと相性バッチリです。
+app = ASGIMiddleware(_app)
