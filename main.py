@@ -13,42 +13,39 @@ from linebot.models import (
 import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
-from mangum import Mangum
 
-# .envファイル読み込み
+# .env読み込み
 load_dotenv()
 
 # --- 設定値 ---
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # 名前を変更
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
-server = FastAPI()
+# ★ここをシンプルに「app」に戻します（Vercelは app = FastAPI() を自動検知します）
+app = FastAPI()
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # Gemini設定
 genai.configure(api_key=GEMINI_API_KEY)
-
 model = genai.GenerativeModel('gemini-2.5-flash')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- ヘルパー関数: Geminiで画像を解析 ---
+# --- ヘルパー関数: Gemini解析 ---
 def analyze_book_image(image_bytes):
     try:
-        # バイナリデータをPIL画像形式に変換
         image = Image.open(io.BytesIO(image_bytes))
-
         prompt = """
         あなたは「伝説の実演販売士」です。
         送られてきた本の画像の「タイトル」と「著者」を特定し、
         その本を今すぐ読みたくなるような、人間の欲望を刺激する紹介文を書いてください。
         
-        必ず以下のJSONフォーマットのみを出力してください。Markdownのコードブロック(```json ... ```)は不要です。そのままJSONを返してください。
+        必ず以下のJSONフォーマットのみを出力してください。Markdownのコードブロックは不要です。
 
         {
           "title": "正式なタイトル",
@@ -58,23 +55,14 @@ def analyze_book_image(image_bytes):
           "search_keyword": "Amazon検索用キーワード（タイトル 著者名）"
         }
         """
-
-        # Geminiに画像とプロンプトを渡す
         response = model.generate_content([prompt, image])
-        
-        # テキストを取り出す
-        response_text = response.text
-        
-        # たまにMarkdown記法が含まれることがあるので削除処理
-        response_text = response_text.replace("```json", "").replace("```", "").strip()
-
+        response_text = response.text.replace("```json", "").replace("```", "").strip()
         return json.loads(response_text)
-
     except Exception as e:
         logger.error(f"AI Error: {e}")
         return None
 
-# --- ヘルパー関数: Flex Message生成（前回と同じ） ---
+# --- ヘルパー関数: Flex Message ---
 def create_flex_message(data):
     import urllib.parse
     query = urllib.parse.quote(data['search_keyword'])
@@ -153,8 +141,8 @@ def create_flex_message(data):
     return FlexSendMessage(alt_text=f"【要約】{data['title']}", contents=bubble_json)
 
 
-# --- LINE Webhook ---
-@server.post("/callback")
+# --- エンドポイント ---
+@app.post("/callback")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
@@ -168,7 +156,7 @@ async def callback(request: Request):
 def handle_text_message(event):
     line_bot_api.reply_message(
         event.reply_token,
-        TextSendMessage(text="本の表紙写真を送ってください！📸\nGeminiが即座にプレゼンします。")
+        TextSendMessage(text="本の表紙写真を送ってください！📸")
     )
 
 @handler.add(MessageEvent, message=ImageMessage)
@@ -177,9 +165,7 @@ def handle_image_message(event):
     message_content = line_bot_api.get_message_content(message_id)
     image_bytes = message_content.content
     
-    # 解析
     book_data = analyze_book_image(image_bytes)
-
     if not book_data:
         line_bot_api.reply_message(
             event.reply_token,
@@ -189,10 +175,3 @@ def handle_image_message(event):
 
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
-
-app = Mangum(server)
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
