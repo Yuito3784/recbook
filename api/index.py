@@ -143,7 +143,7 @@ def create_flex_message(data):
 
 
 # --- エンドポイント ---
-@app.post("/callback")
+@app.post("/api/index")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
@@ -180,3 +180,5 @@ def handle_image_message(event):
 # ★重要：Vercelのエントリーポイント
 # 変数名を「handler」にして、Mangumで包みます。
 handler = Mangum(app)
+# Vercelが変数「app」を探した場合に備えて、Mangum自体をappにも入れます
+app_adapter = handler
