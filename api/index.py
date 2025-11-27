@@ -13,7 +13,6 @@ from linebot.models import (
 import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
-# ★ここがポイント！Vercelが大好きな「a2wsgi」を使います
 from a2wsgi import ASGIMiddleware
 
 # .env読み込み
@@ -26,12 +25,15 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 AMAZON_ASSOCIATE_TAG = os.getenv("AMAZON_ASSOCIATE_TAG", "dummy-tag-22")
 
 # --- 初期化 ---
-# ★重要1：変数名を「_app」にします。
-# 先頭にアンダーバーをつけることで、Vercelの自動検知から隠します。
+# Vercelに見つからないように、FastAPI本体は _app にします
 _app = FastAPI()
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
-handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
+# ★★★ ここが修正ポイント！ ★★★
+# 名前を「handler」から「line_handler」に変えます。
+# これでVercelが勘違いしなくなります。
+line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # Gemini設定
 genai.configure(api_key=GEMINI_API_KEY)
@@ -79,22 +81,24 @@ def create_flex_message(data):
     return FlexSendMessage(alt_text=f"【要約】{data['title']}", contents=bubble_json)
 
 # --- エンドポイント ---
-# ★重要2：デコレーターも _app を使います
 @_app.post("/api/index")
 async def callback(request: Request):
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
     try:
-        handler.handle(body.decode("utf-8"), signature)
+        # ★ここも line_handler に変更
+        line_handler.handle(body.decode("utf-8"), signature)
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature")
     return "OK"
 
-@handler.add(MessageEvent, message=TextMessage)
+# ★ここも line_handler に変更
+@line_handler.add(MessageEvent, message=TextMessage)
 def handle_text_message(event):
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text="本の表紙写真を送ってください！📸"))
 
-@handler.add(MessageEvent, message=ImageMessage)
+# ★ここも line_handler に変更
+@line_handler.add(MessageEvent, message=ImageMessage)
 def handle_image_message(event):
     message_id = event.message.id
     message_content = line_bot_api.get_message_content(message_id)
@@ -106,6 +110,6 @@ def handle_image_message(event):
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
 
-# ★重要3：ここで「app」という名前で、WSGI変換したものを公開します。
-# Vercelは「app」という変数だけを見つけて実行します。中身はa2wsgiなのでVercelと相性バッチリです。
+# ★重要：Vercelは変数「app」を見つけて起動します。
+# handlerという変数がなくなったので、迷わずこれを選んでくれます。
 app = ASGIMiddleware(_app)
