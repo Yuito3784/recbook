@@ -13,6 +13,7 @@ from linebot.models import (
 import google.generativeai as genai
 from PIL import Image
 from dotenv import load_dotenv
+from mangum import Mangum
 
 # .envファイル読み込み
 load_dotenv()
@@ -188,6 +189,8 @@ def handle_image_message(event):
 
     flex_message = create_flex_message(book_data)
     line_bot_api.reply_message(event.reply_token, flex_message)
+
+handler = Mangum(app)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
